@@ -6,58 +6,78 @@ import java.util.*;
 
 public class ChatWeb {
 
-    private static Set<PrintWriter> clients = new HashSet<>();
+    private static final int PORT = 1234;
+    private static Set<DataOutputStream> clients = new HashSet<>();
 
     public static void main(String[] args) {
         System.out.println("Server đang chạy...");
 
-        try (ServerSocket serverSocket = new ServerSocket(1234)) {
+        try (ServerSocket server = new ServerSocket(PORT)) {
             while (true) {
-                Socket socket = serverSocket.accept();
-                System.out.println("Client kết nối!");
-                new ClientHandler(socket).start();
+                Socket socket = server.accept();
+                System.out.println("Client connected");
+
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+                clients.add(out);
+
+                new Thread(new ClientHandler(socket, out)).start();
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    static class ClientHandler extends Thread {
-        private Socket socket;
-        private PrintWriter out;
-        private BufferedReader in;
+    static class ClientHandler implements Runnable {
+        private DataInputStream in;
+        private DataOutputStream out;
 
-        public ClientHandler(Socket socket) {
-            this.socket = socket;
+        ClientHandler(Socket socket, DataOutputStream out) throws IOException {
+            this.in = new DataInputStream(socket.getInputStream());
+            this.out = out;
         }
 
         @Override
         public void run() {
             try {
-                in = new BufferedReader(
-                        new InputStreamReader(socket.getInputStream()));
-                out = new PrintWriter(socket.getOutputStream(), true);
+                while (true) {
+                    String type = in.readUTF();
 
-                clients.add(out);
+                    if (type.equals("TEXT")) {
+                        String msg = in.readUTF();
+                        broadcastText(msg);
+                    }
 
-                String message;
-                while ((message = in.readLine()) != null) {
-                    for (PrintWriter writer : clients) {
-                        writer.println(message);
+                    if (type.equals("IMAGE")) {
+                        String sender = in.readUTF();
+                        String fileName = in.readUTF();
+                        int length = in.readInt();
+                        byte[] data = new byte[length];
+                        in.readFully(data);
+                        broadcastImage(sender, fileName, data);
                     }
                 }
             } catch (IOException e) {
-                e.printStackTrace();
-            } finally {
-                if (out != null) {
-                    clients.remove(out);
-                }
-                try {
-                    socket.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+                clients.remove(out);
             }
+        }
+    }
+
+    static void broadcastText(String msg) throws IOException {
+        for (DataOutputStream dos : clients) {
+            dos.writeUTF("TEXT");
+            dos.writeUTF(msg);
+            dos.flush();
+        }
+    }
+
+    static void broadcastImage(String sender, String fileName, byte[] data) throws IOException {
+        for (DataOutputStream dos : clients) {
+            dos.writeUTF("IMAGE");
+            dos.writeUTF(sender);
+            dos.writeUTF(fileName);
+            dos.writeInt(data.length);
+            dos.write(data);
+            dos.flush();
         }
     }
 }

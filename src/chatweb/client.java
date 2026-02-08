@@ -1,101 +1,188 @@
 package chatweb;
 
 import javax.swing.*;
+import javax.swing.text.*;
 import java.awt.*;
-import java.awt.event.ActionEvent;
 import java.io.*;
-import java.net.Socket;
-import static javax.swing.WindowConstants.EXIT_ON_CLOSE;
+import java.net.*;
+import java.nio.file.Files;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 public class client extends JFrame {
 
-    private String username;
-
-    private JTextArea txtArea;
-    private JTextField txtMessage;
-    private JButton btnSend;
+    private JTextPane chatPane;
+    private JTextField input;
+    private JButton btnSend, btnImage;
+    private StyledDocument doc;
 
     private Socket socket;
-    private BufferedReader in;
-    private PrintWriter out;
+    private DataInputStream in;
+    private DataOutputStream out;
 
-    // Constructor có username (dùng sau login)
+    private String username;
+
     public client(String username) {
         this.username = username;
         initUI();
         connectServer();
-    }
-
-    // Constructor rỗng (phòng khi test)
-    public client() {
-        this("Guest");
+        listenServer();
     }
 
     private void initUI() {
         setTitle("Chat Client - " + username);
-        setSize(500, 400);
-        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setSize(420, 600);
         setLocationRelativeTo(null);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setLayout(new BorderLayout());
 
-        txtArea = new JTextArea();
-        txtArea.setEditable(false);
-        JScrollPane scroll = new JScrollPane(txtArea);
+        // HEADER
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(new Color(200, 0, 0));
+        JLabel title = new JLabel(" Messenger");
+        title.setForeground(Color.WHITE);
+        title.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        header.add(title, BorderLayout.WEST);
+        add(header, BorderLayout.NORTH);
 
-        txtMessage = new JTextField();
+        // CHAT AREA
+        chatPane = new JTextPane();
+        chatPane.setEditable(false);
+        chatPane.setBackground(new Color(18, 18, 18));
+        chatPane.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 14));
+        doc = chatPane.getStyledDocument();
+
+        JScrollPane scroll = new JScrollPane(chatPane);
+        scroll.setBorder(null);
+        add(scroll, BorderLayout.CENTER);
+
+        // INPUT BAR
+        JPanel inputBar = new JPanel(new BorderLayout(5, 5));
+        inputBar.setBackground(new Color(30, 30, 30));
+        inputBar.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+
+        input = new JTextField();
+        input.setBackground(new Color(45, 45, 45));
+        input.setForeground(Color.WHITE);
+        input.setCaretColor(Color.WHITE);
+        input.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+
+        btnImage = new JButton("📷");
         btnSend = new JButton("Gửi");
 
-        JPanel bottom = new JPanel(new BorderLayout());
-        bottom.add(txtMessage, BorderLayout.CENTER);
-        bottom.add(btnSend, BorderLayout.EAST);
+        inputBar.add(btnImage, BorderLayout.WEST);
+        inputBar.add(input, BorderLayout.CENTER);
+        inputBar.add(btnSend, BorderLayout.EAST);
 
-        add(scroll, BorderLayout.CENTER);
-        add(bottom, BorderLayout.SOUTH);
+        add(inputBar, BorderLayout.SOUTH);
 
-        // gửi tin khi bấm nút
-        btnSend.addActionListener((ActionEvent e) -> sendMessage());
+        btnSend.addActionListener(e -> sendText());
+        input.addActionListener(e -> sendText());
+        btnImage.addActionListener(e -> sendImage());
 
-        // gửi tin khi nhấn Enter
-        txtMessage.addActionListener(e -> sendMessage());
+        setVisible(true);
     }
 
     private void connectServer() {
         try {
             socket = new Socket("localhost", 1234);
-            in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            out = new PrintWriter(socket.getOutputStream(), true);
-
-            txtArea.append("✔ Đã kết nối server\n");
-
-            // luồng nhận tin
-            new Thread(() -> {
-                try {
-                    String line;
-                    while ((line = in.readLine()) != null) {
-                        txtArea.append(line + "\n");
-                    }
-                } catch (IOException ex) {
-                    txtArea.append("❌ Mất kết nối server\n");
-                }
-            }).start();
-
+            in = new DataInputStream(socket.getInputStream());
+            out = new DataOutputStream(socket.getOutputStream());
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(this,
-                    "Không kết nối được server!",
-                    "Lỗi",
-                    JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Không kết nối được server");
         }
     }
 
-    private void sendMessage() {
-        String msg = txtMessage.getText().trim();
-        if (msg.isEmpty()) return;
+    private void sendText() {
+        try {
+            if (input.getText().trim().isEmpty()) return;
 
-        out.println(username + ": " + msg);
-        txtMessage.setText("");
+            out.writeUTF("TEXT");
+            out.writeUTF(username + ": " + input.getText());
+            out.flush();
+
+            input.setText("");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
-    // test độc lập
+    private void sendImage() {
+        JFileChooser fc = new JFileChooser();
+        if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            try {
+                File file = fc.getSelectedFile();
+                byte[] bytes = Files.readAllBytes(file.toPath());
+
+                out.writeUTF("IMAGE");
+                out.writeUTF(username);
+                out.writeUTF(file.getName());
+                out.writeInt(bytes.length);
+                out.write(bytes);
+                out.flush();
+
+                appendImage(bytes);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void listenServer() {
+        new Thread(() -> {
+            try {
+                while (true) {
+                    String type = in.readUTF();
+
+                    if (type.equals("TEXT")) {
+                        String msg = in.readUTF();
+                        appendText(msg);
+                    }
+
+                    if (type.equals("IMAGE")) {
+                        String sender = in.readUTF();
+                        String name = in.readUTF();
+                        int len = in.readInt();
+                        byte[] img = new byte[len];
+                        in.readFully(img);
+                        appendImage(img);
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    private void appendText(String msg) {
+    try {
+        SimpleAttributeSet style = new SimpleAttributeSet();
+        StyleConstants.setForeground(style, Color.WHITE); // chữ trắng
+        StyleConstants.setFontFamily(style, "Segoe UI");
+        StyleConstants.setFontSize(style, 14);
+
+        doc.insertString(doc.getLength(), msg + "\n", style);
+    } catch (BadLocationException e) {
+        e.printStackTrace();
+    }
+}
+
+    private void appendImage(byte[] imgBytes) {
+        try {
+            ImageIcon icon = new ImageIcon(imgBytes);
+            Image img = icon.getImage().getScaledInstance(160, -1, Image.SCALE_SMOOTH);
+            icon = new ImageIcon(img);
+
+            chatPane.setCaretPosition(doc.getLength());
+            chatPane.insertIcon(icon);
+            doc.insertString(doc.getLength(), "\n", null);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    // MAIN để test nhanh
     public static void main(String[] args) {
-        new client("admin_DMS").setVisible(true);
+        new client("Người Dùng");
     }
 }

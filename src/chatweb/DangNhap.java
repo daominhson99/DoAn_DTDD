@@ -59,11 +59,11 @@ public class DangNhap extends JFrame {
         String p = new String(txtPass.getPassword());
 
         if (UserDAO.login(u, p)) {
-            JOptionPane.showMessageDialog(this, "Login OK");
+            JOptionPane.showMessageDialog(this, "Đăng nhập được rồi next đi");
             new client(u).setVisible(true);
             dispose();
         } else {
-            JOptionPane.showMessageDialog(this, "Sai user hoặc pass");
+            JOptionPane.showMessageDialog(this, "Sai mật khẩu kìa cu");
         }
     }
     public static void main(String[] args) {
